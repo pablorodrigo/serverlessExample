@@ -3,38 +3,39 @@
  * Date: 2021/08/13
  * Time: 11:14
  */
-import {APIGatewayProxyHandler} from "aws-lambda";
-import {document} from "../../utils/dynamodbClient";
+import { APIGatewayProxyHandler } from "aws-lambda";
+import { document } from "../../utils/dynamodbClient";
 
 export const handle: APIGatewayProxyHandler = async (event) => {
-    const {id} = event.pathParameters;
+  const { id } = event.pathParameters;
 
-    const response = await document.query({
-        TableName: "users_certificates",
-        KeyConditionExpression: "id = :id",
-        ExpressionAttributeValues: {
-            ":id": id
-        }
-    }).promise()
+  const response = await document
+    .query({
+      TableName: "users_certificates",
+      KeyConditionExpression: "id = :id",
+      ExpressionAttributeValues: {
+        ":id": id,
+      },
+    })
+    .promise();
 
-    const userCertificate = response.Items[0]
+  const userCertificate = response.Items[0];
 
-    if (userCertificate) {
-        return {
-            statusCode: 200,
-            body: JSON.stringify({
-                message: "Valid certificate",
-                name: userCertificate.name,
-                url: `${process.env.AWS_SERVERLESS}/${id}.pdf`
-            })
-        }
-    }
-
+  if (userCertificate) {
     return {
-        statusCode: 400,
-        body: JSON.stringify({
-            message: "Invalid certificate"
-        })
-    }
+      statusCode: 200,
+      body: JSON.stringify({
+        message: "Valid certificate",
+        name: userCertificate.name,
+        url: `${process.env.AWS_SERVERLESS}/${id}.pdf`,
+      }),
+    };
+  }
 
-}
+  return {
+    statusCode: 400,
+    body: JSON.stringify({
+      message: "Invalid certificate",
+    }),
+  };
+};

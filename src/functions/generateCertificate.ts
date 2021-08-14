@@ -3,114 +3,124 @@
  * Date: 2021/08/11
  * Time: 13:23
  */
-import chromium from "chrome-aws-lambda"
+import chromium from "chrome-aws-lambda";
 import path from "path";
 import * as fs from "fs";
 import * as handlebars from "handlebars";
 import dayjs from "dayjs";
-import {document} from "../../utils/dynamodbClient";
-import {S3} from "aws-sdk";
+import { document } from "../../utils/dynamodbClient";
+import { S3 } from "aws-sdk";
 
 interface ICreateCertificate {
-    id: string;
-    name: string;
-    grade: string;
+  id: string;
+  name: string;
+  grade: string;
 }
 
 interface ITemplate {
-    id: string;
-    name: string;
-    grade: string;
-    date: string;
-    medal: string;
+  id: string;
+  name: string;
+  grade: string;
+  date: string;
+  medal: string;
 }
 
 const compile = async function (data: ITemplate) {
+  const filePath = path.join(
+    process.cwd(),
+    "src",
+    "templates",
+    "certificate.hbs"
+  );
 
-    const filePath = path.join(process.cwd(), "src", "templates", "certificate.hbs");
+  const html = fs.readFileSync(filePath, "utf-8");
 
-    const html = fs.readFileSync(filePath, "utf-8");
-
-    return handlebars.compile(html)(data);
-}
+  return handlebars.compile(html)(data);
+};
 
 export const handle = async (event) => {
-    const {id, name, grade} = JSON.parse(event.body) as ICreateCertificate;
+  const { id, name, grade } = JSON.parse(event.body) as ICreateCertificate;
 
-    const response = await document.query({
+  const response = await document
+    .query({
+      TableName: "users_certificates",
+      KeyConditionExpression: "id = :id",
+      ExpressionAttributeValues: {
+        ":id": id,
+      },
+    })
+    .promise();
+
+  const userAlreadyExists = response.Items[0];
+
+  if (!userAlreadyExists) {
+    await document
+      .put({
         TableName: "users_certificates",
-        KeyConditionExpression: "id = :id",
-        ExpressionAttributeValues: {
-            ":id": id
-        }
-    }).promise()
+        Item: { id, name, grade },
+      })
+      .promise();
+  }
 
-    const userAlreadyExists = response.Items[0]
+  const medalPath = path.join(process.cwd(), "src", "templates", "selo.png");
+  const medal = fs.readFileSync(medalPath, "base64");
 
-    if (!userAlreadyExists){
-        await document.put({
-            TableName: "users_certificates",
-            Item: {id, name, grade,}
-        }).promise();
-    }
+  const data: ITemplate = {
+    date: dayjs().format("DD/MM/YYYY"),
+    grade,
+    name,
+    id,
+    medal,
+  };
 
-    const medalPath = path.join(process.cwd(), "src", "templates", "selo.png");
-    const medal = fs.readFileSync(medalPath, "base64");
+  // generate certificate
+  // compile using handlebars
+  const content = await compile(data);
 
-    const data: ITemplate = {
-        date: dayjs().format("DD/MM/YYYY"),
-        grade,
-        name,
-        id,
-        medal
-    }
+  // pdf transform
 
-    // generate certificate
-    // compile using handlebars
-    const content = await compile(data);
+  const browser = await chromium.puppeteer.launch({
+    headless: true,
+    args: chromium.args,
+    defaultViewport: chromium.defaultViewport,
+    executablePath: await chromium.executablePath,
+  });
 
-    // pdf transform
+  const page = await browser.newPage();
 
-    const browser = await chromium.puppeteer.launch({
-        headless: true,
-        args: chromium.args,
-        defaultViewport: chromium.defaultViewport,
-        executablePath: await chromium.executablePath,
+  await page.setContent(content);
+
+  const pdf = await page.pdf({
+    format: "a4",
+    path: process.env.IS_OFFLINE ? "certificate.pdf" : null,
+    landscape: true,
+    printBackground: true,
+    preferCSSPageSize: true,
+  });
+
+  await browser.close();
+
+  // save s3
+  const s3 = new S3();
+
+  await s3
+    .putObject({
+      Bucket: "ignitecertificate-dev-serverless",
+      Key: `${id}.pdf`,
+      ACL: "public-read",
+      Body: pdf,
+      ContentType: "application/pdf",
     })
+    .promise();
 
-    const page = await browser.newPage()
-
-    await page.setContent(content)
-
-    const pdf = await page.pdf({
-        format: "a4",
-        path: process.env.IS_OFFLINE ? "certificate.pdf" : null,
-        landscape: true,
-        printBackground: true,
-        preferCSSPageSize: true
-    })
-
-    await browser.close()
-
-    // save s3
-    const s3 = new S3()
-
-    await s3.putObject({
-        Bucket: "ignitecertificate-dev-serverless",
-        Key: `${id}.pdf`,
-        ACL: "public-read",
-        Body: pdf,
-        ContentType: "application/pdf"
-    }).promise();
-
-    return {
-        statusCode: 201,
-        body: JSON.stringify({
-            message: "Certificate created!",
-            url: `${process.env.AWS_SERVERLESS}/${id}.pdf`
-        }),
-        headers: {
-            "Content-type": "application/json"
-        }
-    }
-}
+  return {
+    statusCode: 201,
+    body: JSON.stringify({
+      message: "Certificate created!",
+      url: `${process.env.AWS_SERVERLESS}/${id}.pdf`,
+    }),
+    headers: {
+      "Content-type": "application/json",
+    },
+  };
+};
