@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "Serverless offline",
     "deploy": "sls deploy -v",
-    "dynamo:start": "serverless dynamodb start"
+    "dynamo:install": "serverless dynamodb install",
+    "dynamo:start": "serverless dynamodb start",
+    "dynamo:remove": "serverless dynamodb remove"
   },
   "dependencies": {
     "@middy/core": "^1.5.2",
